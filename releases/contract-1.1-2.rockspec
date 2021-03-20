@@ -1,7 +1,7 @@
 package = "contract"
 version = "1.1-2"
 source = {
-   url = "git@github.com:mrrogge/contract.git",
+   url = "git://github.com/mrrogge/contract",
    tag = 'v1.1'
 }
 description = {
