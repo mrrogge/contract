@@ -25,7 +25,8 @@ SOFTWARE.
 -- the module
 local contract = {
     _callCache = {},
-    _callCacheLen = 0
+    _callCacheLen = 0,
+    enabled=true
 }
 
 -- token enum
@@ -63,24 +64,28 @@ function Lexer:init(input)
     self.errorLevel = 5
 end
 
+---Advances lexer position by i characters and returns the new character.
 function Lexer:advance(i)
     i = i or 1
     self.pos = self.pos+i
     return self:current()
 end
 
+---Returns a substring from the input.
+-- i is the starting offset from the current position. If 0, the current position is used. Similarly, j is the ending offset.
 function Lexer:peek(i,j)
     i = i or 0
     j = j or i
     return string.lower(string.sub(self.input, self.pos+i, self.pos+j))
 end
 
+---Returns the character at the current position.
 function Lexer:current()
     return self:peek(0)
 end
 
+---Processes the input string and returns the next token.
 function Lexer:process()
-    --Processes the input string and returns the next token.
     local current = self:current()
     while current and current ~= '' do
         if isWhitespace(current) then
@@ -167,8 +172,8 @@ function Lexer:process()
                 current = self:advance(1)
                 return TOKEN.COMMA
             else
-                error(('Contract syntax error: pos %d, char %s'):format(
-                    self.pos, self:current()), 2)
+                return nil, ('Contract syntax error: pos %d, char %s'):format(
+                    self.pos, self:current())
             end
         end
     end
@@ -185,74 +190,57 @@ function Interpreter:new()
     return o
 end
 
-local ruleTypeList = {}
-local argNameList, argValList = {}, {}
+---Sets up the Interpreter object to check a list of arguments against a contract.
 function Interpreter:init(lexer, input, ...)
     self.lexer = lexer
     self.lexer:init(input)
-    self.argNameList, self.argValList = argNameList, argValList
-    emptyTable(self.argNameList)
-    emptyTable(self.argValList)
-    local nargs = 0
+    --argTypeList will hold the type string of each of the passed in arguments.
+    self.argList = self.argList or {}
+    emptyTable(self.argList)
     for i=1, select('#',...), 1 do
-        if i%2 == 1 then
-            nargs = nargs + 1
-            local argName = select(i,...)
-            table.insert(self.argNameList, argName)
-        else
-            local argVal = select(i,...)
-            self.argValList[nargs] = argVal
-        end
+        local argVal = select(i, ...)
+        table.insert(self.argList, argVal)
     end
-    self.argInt = 1
-    self.ruleTypeList = ruleTypeList
+    --ruleTypeList will hold each of the allowed type strings for the given argument defined by the contract.
+    self.ruleTypeList = self.ruleTypeList or {}
     emptyTable(self.ruleTypeList)
+    --req holds whether or not the current argument being looked at is required according to the contract.
     self.req = false
-    self.errorLevel = 5
+    --argInt holds the current argument number being looked at.
+    self.argInt = 1
+    --token/tokenVal will hold the latest token info fed from the lexer.
+    self.token, self.tokenVal = nil, nil
+    return self
 end
 
-function Interpreter:addNewType(val)
-    table.insert(self.ruleTypeList, val)
-end
-
-function Interpreter:currentArgName()
-    return self.argNameList[self.argInt]
-end
-
+---Returns the current argument value.
 function Interpreter:currentArgVal()
-    return self.argValList[self.argInt]
+    return self.argList[self.argInt]
 end
 
+---Returns the type string of the current argument value.
 function Interpreter:currentArgType()
     return type(self:currentArgVal())
 end
 
-function Interpreter:incErrorLevel()
-    self.errorLevel = self.errorLevel + 1
-    self.lexer.errorLevel = self.lexer.errorLevel + 1
-end
-
-function Interpreter:decErrorLevel()
-    self.errorLevel = self.errorLevel - 1
-    self.lexer.errorLevel = self.lexer.errorLevel - 1
-end
-
+---Checks the current argument against its corresponding contract info.
+-- Returns true if argument passes, otherwise returns nil and an error string.
 function Interpreter:checkArg()
-    self:incErrorLevel()
     local allowFalse = contract._config.allowFalseOptionalArgs
     if self.req then
         if self:currentArgVal() == nil then
-            error(('Contract violated: arg pos "%d" is required.'):format(
-                self.argInt), self.errorLevel)
+            return nil, 
+                ('Contract violated: arg pos "%d" is required.'):format(
+                self.argInt)
         end
     else
         if (not allowFalse and self:currentArgVal() == nil)
-                or (allowFalse and not self:currentArgVal()) then
+        or (allowFalse and not self:currentArgVal()) 
+        then
             emptyTable(self.ruleTypeList)
             self.argInt = self.argInt + 1
             self.req = false
-            self:decErrorLevel()
-            return
+            return true
         end
     end
     local isValid = false
@@ -263,73 +251,85 @@ function Interpreter:checkArg()
     end
     if not isValid then
         if #self.ruleTypeList > 1 then
-            error(('Contract violated: arg "%s" is type "%s" (%s), but must be one of: %s'):format(
-                self:currentArgName(), self:currentArgType(), self:currentArgVal(),
-                table.concat(self.ruleTypeList, '|')), self.errorLevel
-            )
+            return nil, 
+                ('Contract violated: arg "%d" is type "%s" (%s), but must be one of: %s'):format(
+                self.argInt, self:currentArgType(), self:currentArgVal(),
+                table.concat(self.ruleTypeList, '|'))
         else
-            error(('Contract violated: arg "%s" is type "%s" (%s), but must be "%s"'):format(
-                self:currentArgName(), self:currentArgType(), self:currentArgVal(),
-                table.concat(self.ruleTypeList, '|')), self.errorLevel
-            )
+            return nil,
+                ('Contract violated: arg "%d" is type "%s" (%s), but must be "%s"'):format(
+                self.argInt, self:currentArgType(), self:currentArgVal(),
+                table.concat(self.ruleTypeList, '|'))
+            
         end     
     end
     emptyTable(self.ruleTypeList)
     self.argInt = self.argInt + 1
     self.req = false
-    self:decErrorLevel()
+    return true
 end
 
+---Advances the lexer and checks that the passed token matches the returned token.
+-- If matched, returns true, otherwise returns nil and an error string.
 function Interpreter:eat(token)
-    self:incErrorLevel()
     if self.token == token then
         self.token, self.tokenVal = self.lexer:process()
     else
-        error(('Contract syntax error: expected token "%s", but got "%s"'):format(
-            token, self.token), self.errorLevel)
+        return nil,
+            ('Contract syntax error: expected token "%s", but got "%s"'):format(
+            token, self.token)
     end
-    self:decErrorLevel()
+    return true
 end
 
+---Consume function for a type symbol.
 function Interpreter:type_()
     -- type = num|str|bool|user|fnc|th|tbl|any
-    self:incErrorLevel()
-    self:addNewType(self.tokenVal)
-    self:eat(TOKEN.TYPE)
-    self:decErrorLevel()
+    table.insert(self.ruleTypeList, self.tokenVal)
+    return self:eat(TOKEN.TYPE)
 end
 
+---Consume function for an argRule symbol.
 function Interpreter:argRule()
     -- argRule = ['r'] , type , ('|' , type)*
-    self:incErrorLevel()
     if self.token == TOKEN.REQ then
         self.req = true
-        self:eat(TOKEN.REQ)
+        local ok, err = self:eat(TOKEN.REQ)
+        if not ok then return nil, err end
     end
-    self:type_()
+    local ok, err = self:type_()
+    if not ok then return nil, err end
     while self.token == TOKEN.OR do
-        self:eat(TOKEN.OR)
-        self:type_()
+        local ok, err = self:eat(TOKEN.OR)
+        if not ok then return nil, err end
+        ok, err = self:type_()
+        if not ok then return nil, err end
     end
-    self:checkArg()
-    self:decErrorLevel()
+    return self:checkArg()
 end
 
+---Consume function for a contract symbol.
 function Interpreter:contract()
     -- contract = '' | (argRule , (',' , argRule)*)
     if self.token == TOKEN.EOF then
-        return
+        return true
     end
-    self:argRule()
+    local ok, err = self:argRule()
+    if not ok then return nil, err end
     while self.token == TOKEN.COMMA do
-        self:eat(TOKEN.COMMA)
-        self:argRule()
+        local ok, err = self:eat(TOKEN.COMMA)
+        if not ok then return nil, err end
+        ok, err = self:argRule()
+        if not ok then return nil, err end
     end
+    return true
 end
 
+---Runs the interpreter, checking the arg list against the contract string.
 function Interpreter:run()
-    self.token,self.tokenVal = self.lexer:process()
-    self:contract()
+    self.token, self.tokenVal = self.lexer:process()
+    if not self.token then return nil, self.tokenVal end
+    return self:contract()
 end
 
 -- cache-related functions
@@ -358,125 +358,142 @@ end
 -- time it is executed. This way the GC doesn't need to work as hard.
 local lexer = Lexer:new()
 local interpreter = Interpreter:new()
-local argNameTbl, argValTbl, argTbl = {}, {}, {}
-local function check(input, level)
-    -- Checks the contract string input against the params of the function that
-    -- is at the specified level in the calling stack.
-    for k,v in pairs(argNameTbl) do
-        argNameTbl[k] = nil
+
+-- local argNameTbl, argValTbl, argTbl = {}, {}, {}
+-- local function check(input, level)
+--     -- Checks the contract string input against the params of the function that
+--     -- is at the specified level in the calling stack.
+--     for k,v in pairs(argNameTbl) do
+--         argNameTbl[k] = nil
+--     end
+--     for k,v in pairs(argValTbl) do
+--         argValTbl[k] = nil
+--     end
+--     for k,v in pairs(argTbl) do
+--         argTbl[k] = nil
+--     end
+--     local argName, argVal
+--     local argCount, i = 1, 1
+--     while true do
+--         argName,argVal = debug.getlocal(level, argCount)
+--         if not argName then
+--             break
+--         else
+--             if argName == 'arg' and type(argVal) == 'table' then
+--                 for j=1, argVal.n, 1 do
+--                     argNameTbl[argCount] = ('(vararg %d)'):format(j)
+--                     argValTbl[argCount] = argVal[j]
+--                     argTbl[i] = argNameTbl[argCount]
+--                     i = i + 1
+--                     argTbl[i] = argValTbl[argCount]
+--                     i = i + 1
+--                 end
+--             else
+--                 argNameTbl[argCount] = argName
+--                 argValTbl[argCount] = argVal
+--                 argTbl[i] = argName
+--                 i = i + 1
+--                 argTbl[i] = argVal
+--                 i = i + 1
+--             end
+--             argCount = argCount + 1
+--         end
+--     end
+--     local vargIdx = -1
+--     while true do
+--         argName,argVal = debug.getlocal(level, vargIdx)
+--         if not argName then
+--             break
+--         else
+--             argNameTbl[argCount] = argName
+--             argValTbl[argCount] = argVal
+--             argTbl[i] = argName
+--             i = i + 1
+--             argTbl[i] = argVal
+--             i = i + 1
+--         end
+--         argCount = argCount + 1
+--         vargIdx = vargIdx - 1
+--     end
+--     local f = debug.getinfo(level, 'f').func
+--     local callString = callToString(f, unpack(argValTbl))
+--     if contract._callCache[callString] then
+--         return
+--     end
+--     interpreter:init(lexer, input, unpack(argTbl))
+--     interpreter:run()
+--     if contract._callCacheLen >= contract._config.callCacheMax
+--             and contract._config.callCacheMax >= 0 then
+--         if contract._config.onCallCacheOverflow == 'error' then
+--             error('call cache overflow')
+--         elseif contract._config.onCallCacheOverflow == 'clear' then
+--             contract.clearCallCache()
+--         end
+--     else
+--         contract._callCache[callString] = true
+--         contract._callCacheLen = contract._callCacheLen + 1
+--     end
+-- end
+
+---Checks the input contract against the list of arguments. 
+-- If no arguments were passed, this function will try to lookup the arguments passed to the function that called this one and check those.
+-- Returns true if arguments pass, otherwise returns nil and an error string.
+local checkArgList = {}
+local function check(input, ...)
+    if not contract.enabled then return end
+    for k,v in pairs(checkArgList) do
+        checkArgList[k] = nil
     end
-    for k,v in pairs(argValTbl) do
-        argValTbl[k] = nil
-    end
-    for k,v in pairs(argTbl) do
-        argTbl[k] = nil
-    end
-    local argName, argVal
-    local argCount, i = 1, 1
-    while true do
-        argName,argVal = debug.getlocal(level, argCount)
-        if not argName then
-            break
-        else
-            if argName == 'arg' and type(argVal) == 'table' then
-                for j=1, argVal.n, 1 do
-                    argNameTbl[argCount] = ('(vararg %d)'):format(j)
-                    argValTbl[argCount] = argVal[j]
-                    argTbl[i] = argNameTbl[argCount]
-                    i = i + 1
-                    argTbl[i] = argValTbl[argCount]
-                    i = i + 1
-                end
+    local nargs = select('#',...)
+    if nargs > 0 then
+        for i=1, nargs, 1 do
+            table.insert(checkArgList, select(i,...))
+        end
+    else
+        --try to get the argument values passed to the function two levels above this one (i.e. the function that called contract.check() or contract()).
+        local i = 1
+        while true do
+            local argName, argVal = debug.getlocal(2, i)
+            if not argName then
+                break
             else
-                argNameTbl[argCount] = argName
-                argValTbl[argCount] = argVal
-                argTbl[i] = argName
-                i = i + 1
-                argTbl[i] = argVal
-                i = i + 1
+                if argName == 'arg' and type(argVal) == 'table' then
+                    for j=1, argVal.n, 1 do
+                        table.insert(checkArgList, argVal[j])
+                    end
+                else
+                    table.insert(checkArgList, argVal)
+                end
             end
-            argCount = argCount + 1
-        end
-    end
-    local vargIdx = -1
-    while true do
-        argName,argVal = debug.getlocal(level, vargIdx)
-        if not argName then
-            break
-        else
-            argNameTbl[argCount] = argName
-            argValTbl[argCount] = argVal
-            argTbl[i] = argName
             i = i + 1
-            argTbl[i] = argVal
-            i = i + 1
-        end
-        argCount = argCount + 1
-        vargIdx = vargIdx - 1
+        end        
     end
-    local f = debug.getinfo(level, 'f').func
-    local callString = callToString(f, unpack(argValTbl))
-    if contract._callCache[callString] then
-        return
-    end
-    interpreter:init(lexer, input, unpack(argTbl))
-    interpreter:run()
-    if contract._callCacheLen >= contract._config.callCacheMax
-            and contract._config.callCacheMax >= 0 then
-        if contract._config.onCallCacheOverflow == 'error' then
-            error('call cache overflow')
-        elseif contract._config.onCallCacheOverflow == 'clear' then
-            contract.clearCallCache()
-        end
-    else
-        contract._callCache[callString] = true
-        contract._callCacheLen = contract._callCacheLen + 1
+    print(unpack(checkArgList))
+    interpreter:init(lexer, input, unpack(checkArgList))
+    local ok, err = interpreter:run()
+    if not ok then
+        error(err)
     end
 end
 
-local function nop()
-    -- the check function is replaced with nop() when contract evaluation is
-    -- turned off.
-end
-
-local function checkExplicitCall(input)
-    if type(jit) == 'table' then
-        return check(input, 2)
-    else
-        return check(input, 3)
-    end
-end
-
-local function checkShortcutCall(_, input)
-    if type(jit) == 'table' then
-        return check(input, 2)
-    else
-        return check(input, 3)
-    end
+function contract.check(input, ...)
+    return check(input, ...)
 end
 
 function contract.on()
-    contract.check = checkExplicitCall
-    local mt = getmetatable(contract)
-    mt.__call = checkShortcutCall
+    contract.enabled = true
 end
 
 function contract.off()
-    contract.check = nop
-    local mt = getmetatable(contract)
-    mt.__call = nop
+    contract.enabled = false
 end
 
 function contract.isOn()
-    return contract.check == checkExplicitCall
+    return contract.enabled
 end
 
 function contract.toggle()
-    if contract.isOn() then
-        contract.off()
-    else
-        contract.on()
-    end
+    contract.enabled = not contract.enabled
 end
 
 function contract.config(options)
@@ -501,7 +518,11 @@ function contract.config(options)
     end
 end
 
-setmetatable(contract, {})
+setmetatable(contract, {
+    __call=function(t, input, ...)
+        return check(input, ...)
+    end
+})
 contract.on()
 contract.config()
 
