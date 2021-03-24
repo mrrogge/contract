@@ -191,16 +191,11 @@ function Interpreter:new()
 end
 
 ---Sets up the Interpreter object to check a list of arguments against a contract.
-function Interpreter:init(lexer, input, ...)
+function Interpreter:init(lexer, input, argList)
     self.lexer = lexer
     self.lexer:init(input)
-    --argTypeList will hold the type string of each of the passed in arguments.
-    self.argList = self.argList or {}
-    emptyTable(self.argList)
-    for i=1, select('#',...), 1 do
-        local argVal = select(i, ...)
-        table.insert(self.argList, argVal)
-    end
+    --argList holds each of the arguments to check against the contract string.
+    self.argList = argList
     --ruleTypeList will hold each of the allowed type strings for the given argument defined by the contract.
     self.ruleTypeList = self.ruleTypeList or {}
     emptyTable(self.ruleTypeList)
@@ -370,11 +365,12 @@ local function check(input, ...)
     end
     local nargs = select('#',...)
     if nargs > 0 then
+        checkArgList.n = nargs
         for i=1, nargs, 1 do
-            table.insert(checkArgList, select(i,...))
+            checkArgList[i] = select(i, ...)
         end
     else
-        --try to get the argument values passed to the function two levels above this one (i.e. the function that called contract.check() or contract()).
+        --try to get the argument values passed to the function two levels above this one (i.e. the function that called contract.check() or contract()). Note that accessing varargs through debug.getlocal() is only supported on Lua v5.2+, NOT v5.1.
         local i = 1
         while true do
             local argName, argVal = debug.getlocal(2, i)
@@ -382,18 +378,21 @@ local function check(input, ...)
                 break
             else
                 if argName == 'arg' and type(argVal) == 'table' then
+                    checkArgList.n = argVal.n
                     for j=1, argVal.n, 1 do
-                        table.insert(checkArgList, argVal[j])
+                        checkArgList[j] = argVal[j]
                     end
                 else
-                    table.insert(checkArgList, argVal)
+                    checkArgList[i] = argVal
                 end
             end
             i = i + 1
-        end        
+        end
+        if not checkArgList.n then
+            checkArgList.n = i-1
+        end
     end
-    print(unpack(checkArgList))
-    interpreter:init(lexer, input, unpack(checkArgList))
+    interpreter:init(lexer, input, checkArgList)
     local ok, err = interpreter:run()
     if not ok then
         error(err)
