@@ -377,19 +377,14 @@ local function check(input, ...)
             if not argName then
                 break
             else
-                if argName == 'arg' and type(argVal) == 'table' then
-                    checkArgList.n = argVal.n
-                    for j=1, argVal.n, 1 do
-                        checkArgList[j] = argVal[j]
-                    end
-                else
-                    checkArgList[i] = argVal
-                end
+                checkArgList[i] = argVal
             end
             i = i + 1
         end
-        if not checkArgList.n then
+        if i > 1 then
             checkArgList.n = i-1
+        else
+            error('Implicit arg lookup failed. Note that vararg lookup is not supported; varargs can still be passed explicitly.')
         end
     end
     interpreter:init(lexer, input, checkArgList)
