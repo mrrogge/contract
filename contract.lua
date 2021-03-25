@@ -360,6 +360,11 @@ local interpreter = Interpreter:new()
 local checkArgList = {}
 local function check(input, ...)
     if not contract.enabled then return end
+    if input == nil then return end
+    if input == '' then return end
+    if type(input) ~= 'string' then
+        error('contract must be a string type.')
+    end
     for k,v in pairs(checkArgList) do
         checkArgList[k] = nil
     end
