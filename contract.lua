@@ -22,6 +22,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
+local defaultConfigTable = {
+    allowFalseOptionalArgs=false,
+    callCacheMax=-1,
+    onCallCacheOverflow='nothing'
+}
+
 -- the module
 local contract = {
     _enabled=true,
@@ -427,13 +433,9 @@ function contract.toggle()
 end
 
 function contract.config(options)
-    if contract._config.allowFalseOptionalArgs == nil then
-        contract._config.allowFalseOptionalArgs = false
-    end
-    contract._config.callCacheMax = contract._config.callCacheMax or -1
-    contract._config.onCallCacheOverflow = contract._config.onCallCacheOverflow or 'nothing'
-    if not options then
-        return
+    if not options then return end
+    if type(options) ~= 'table' then
+        error(('options arg must be a table, not %s.'):format(type(options)))
     end
     if options.allowFalseOptionalArgs ~= nil then
         contract._config.allowFalseOptionalArgs = options.allowFalseOptionalArgs
@@ -451,7 +453,5 @@ setmetatable(contract, {
         return check(input, ...)
     end
 })
-contract.on()
-contract.config()
 
 return contract
