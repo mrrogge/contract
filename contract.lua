@@ -24,9 +24,14 @@ SOFTWARE.
 
 -- the module
 local contract = {
+    enabled=true,
+    _config={
+        allowFalseOptionalArgs=false,
+        callCacheMax=-1,
+        onCallCacheOverflow='nothing'
+    },
     _callCache = {},
-    _callCacheLen = 0,
-    enabled=true
+    _callCacheLen = 0
 }
 
 -- token enum
