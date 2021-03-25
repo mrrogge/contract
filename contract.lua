@@ -427,8 +427,6 @@ function contract.toggle()
 end
 
 function contract.config(options)
-    contract._config = contract._config or {}
-    --set defaults
     if contract._config.allowFalseOptionalArgs == nil then
         contract._config.allowFalseOptionalArgs = false
     end
