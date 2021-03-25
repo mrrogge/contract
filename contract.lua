@@ -317,6 +317,8 @@ function Interpreter:contract()
         ok, err = self:argRule()
         if not ok then return nil, err end
     end
+    ok, err = self:eat(TOKEN.EOF)
+    if not ok then return nil, err end
     return true
 end
 
