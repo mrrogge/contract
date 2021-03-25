@@ -24,7 +24,7 @@ SOFTWARE.
 
 -- the module
 local contract = {
-    enabled=true,
+    _enabled=true,
     _config={
         allowFalseOptionalArgs=false,
         callCacheMax=-1,
@@ -366,7 +366,7 @@ local interpreter = Interpreter:new()
 -- Returns true if arguments pass, otherwise returns nil and an error string.
 local checkArgList = {}
 local function check(input, ...)
-    if not contract.enabled then return end
+    if not contract._enabled then return end
     if input == nil then return end
     if input == '' then return end
     if type(input) ~= 'string' then
@@ -411,19 +411,19 @@ function contract.check(input, ...)
 end
 
 function contract.on()
-    contract.enabled = true
+    contract._enabled = true
 end
 
 function contract.off()
-    contract.enabled = false
+    contract._enabled = false
 end
 
 function contract.isOn()
-    return contract.enabled
+    return contract._enabled
 end
 
 function contract.toggle()
-    contract.enabled = not contract.enabled
+    contract._enabled = not contract._enabled
 end
 
 function contract.config(options)
