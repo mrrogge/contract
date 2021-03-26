@@ -32,9 +32,9 @@ local defaultConfigTable = {
 local contract = {
     _enabled=true,
     _config={
-        allowFalseOptionalArgs=false,
-        callCacheMax=-1,
-        onCallCacheOverflow='nothing'
+        allowFalseOptionalArgs=defaultConfigTable.allowFalseOptionalArgs,
+        callCacheMax=defaultConfigTable.callCacheMax,
+        onCallCacheOverflow=defaultConfigTable.onCallCacheOverflow
     },
     _callCache = {},
     _callCacheLen = 0
@@ -433,7 +433,9 @@ function contract.toggle()
 end
 
 function contract.config(options)
-    if not options then return end
+    if not options then
+        options = defaultConfigTable
+    end
     if type(options) ~= 'table' then
         error(('options arg must be a table, not %s.'):format(type(options)))
     end
