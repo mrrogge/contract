@@ -440,12 +440,12 @@ function contract.config(options)
         error(('options arg must be a table, not %s.'):format(type(options)))
     end
     if options.allowFalseOptionalArgs ~= nil then
-        contract._config.allowFalseOptionalArgs = options.allowFalseOptionalArgs
+        contract._config.allowFalseOptionalArgs = not not options.allowFalseOptionalArgs
     end
-    if options.callCacheMax ~= nil then
+    if type(options.callCacheMax) == 'number' then
         contract._config.callCacheMax = options.callCacheMax
     end
-    if options.errorOnCallCacheOverflow ~= nil then
+    if type(options.errorOnCallCacheOverflow) == 'string' then
         contract._config.errorOnCallCacheOverflow = options.errorOnCallCacheOverflow
     end
 end
