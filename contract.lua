@@ -184,7 +184,7 @@ function Lexer:process()
     return TOKEN.EOF
 end
 
--- ContractRule class. Used by the Cotract class to represent a singular rule for an arg.
+-- ContractRule class. Used by the Contract class to represent a singular rule for an arg.
 local ContractRule = {}
 ContractRule.__index = ContractRule
 
