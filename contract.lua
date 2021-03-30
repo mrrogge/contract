@@ -387,6 +387,11 @@ function contract.clearCache()
     parser:clearCache()
 end
 
+-- Depreciated; left in for backwards compatibility.
+function contract.clearCallCache()
+    print('WARNING: contract.clearCallCache() is depreciated, use contract.clearCache() instead.')
+end
+
 ---Checks the input contract against the list of arguments. 
 -- If no arguments were passed, this function will try to lookup the arguments passed to the function that called this one and check those.
 local checkArgList = {}
