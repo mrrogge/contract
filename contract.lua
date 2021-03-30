@@ -72,7 +72,6 @@ end
 function Lexer:init(input)
     self.input = input or ''
     self.pos = 1
-    self.errorLevel = 5
 end
 
 ---Advances lexer position by i characters and returns the new character.
