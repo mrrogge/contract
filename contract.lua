@@ -24,8 +24,8 @@ SOFTWARE.
 
 local defaultConfigTable = {
     allowFalseOptionalArgs=false,
-    callCacheMax=-1,
-    onCallCacheOverflow='nothing'
+    checkCacheMax=-1,
+    onCheckCacheOverflow='nothing'
 }
 
 -- the module
@@ -33,11 +33,11 @@ local contract = {
     _enabled=true,
     _config={
         allowFalseOptionalArgs=defaultConfigTable.allowFalseOptionalArgs,
-        callCacheMax=defaultConfigTable.callCacheMax,
-        onCallCacheOverflow=defaultConfigTable.onCallCacheOverflow
+        checkCacheMax=defaultConfigTable.checkCacheMax,
+        onCheckCacheOverflow=defaultConfigTable.onCheckCacheOverflow
     },
-    _callCache = {},
-    _callCacheLen = 0
+    _checkCache = {},
+    _checkCacheLen = 0
 }
 
 -- token enum
@@ -269,8 +269,8 @@ function Parser:new()
     return o
 end
 
-function Parser:init(input, lexer)
-    self.lexer = lexer
+function Parser:init(input)
+    self.lexer = self.lexer or Lexer:new()
     self.lexer:init(input)
     self.input = input
     self.ruleIdx = 0
@@ -372,32 +372,31 @@ function Parser:run()
     return self:contract()
 end
 
+-- the check function re-uses local instances of lexer and parser each
+-- time it is executed. This way the GC doesn't need to work as hard.
+local parser = Parser:new():init('')
+
 -- cache-related functions
 local tempTbl = {}
-local function callToString(f, ...)
-    -- returns a string representation of a function call. Uses the function's
-    -- identity and the argument types.
+local function argTypesToString(t)
+    -- for a given list of args t, returns a string representation of the types of each arg. This is used to avoid re-running a contract check that is equivalent to a previous one, since a check will always yield the same result for a given input string and the same type list.
     for k,v in pairs(tempTbl) do
         tempTbl[k] = nil
     end
-    local nargs = select('#',...)
-    for i=1, nargs, 1 do
-        table.insert(tempTbl, type(select(i,...)))
+    for i=1, t.n, 1 do
+        table.insert(tempTbl, type(t[i]))
     end
-    return tostring(f)..'-'..table.concat(tempTbl, '-')
+    return table.concat(tempTbl, '-')
 end
 
-function contract.clearCallCache()
-    for k,v in pairs(contract._callCache) do
-        contract._callCache[k] = nil
+-- Clears the caches for the module.
+function contract.clearCache()
+    parser:clearCache()
+    for k,v in pairs(contract._checkCache) do
+        contract._checkCache[k] = nil
     end
-    contract._callCacheLen = 0
+    contract._checkCacheLen = 0
 end
-
--- the check function re-uses local instances of lexer and parser each
--- time it is executed. This way the GC doesn't need to work as hard.
-local lexer = Lexer:new()
-local parser = Parser:new()
 
 ---Checks the input contract against the list of arguments. 
 -- If no arguments were passed, this function will try to lookup the arguments passed to the function that called this one and check those.
@@ -436,11 +435,20 @@ local function check(input, ...)
             error('Implicit arg lookup failed. Note that vararg lookup is not supported; varargs can still be passed explicitly.')
         end
     end
-    parser:init(input, lexer)
+    -- check the cache for any equivalent calls made in the past. If found, we can return early without having to rerun the parser/checkArgs() function.
+    local argTypesString = argTypesToString(checkArgList)
+    if contract._checkCache[input]
+    and contract._checkCache[input][argTypesString] then
+        return
+    end
+    parser:init(input)
     local ok, err = parser:run()
     if not ok then error(err) end
     ok, err = parser.o:checkArgs(checkArgList)
     if not ok then error(err) end
+    -- if checkArgs() passed, then we can add this input string and list of arg types to the checkCache table to avoid having to do the work again next time an equivalent check is requested.
+    contract._checkCache[input] = contract._checkCache[input] or {}
+    contract._checkCache[input][argTypesString] = true
 end
 
 function contract.check(input, ...)
