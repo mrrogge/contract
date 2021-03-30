@@ -23,21 +23,15 @@ SOFTWARE.
 ]]
 
 local defaultConfigTable = {
-    allowFalseOptionalArgs=false,
-    checkCacheMax=-1,
-    onCheckCacheOverflow='nothing'
+
 }
 
 -- the module
 local contract = {
     _enabled=true,
     _config={
-        allowFalseOptionalArgs=defaultConfigTable.allowFalseOptionalArgs,
-        checkCacheMax=defaultConfigTable.checkCacheMax,
-        onCheckCacheOverflow=defaultConfigTable.onCheckCacheOverflow
-    },
-    _checkCache = {},
-    _checkCacheLen = 0
+
+    }
 }
 
 -- token enum
@@ -391,10 +385,6 @@ end
 -- Clears the caches for the module.
 function contract.clearCache()
     parser:clearCache()
-    for k,v in pairs(contract._checkCache) do
-        contract._checkCache[k] = nil
-    end
-    contract._checkCacheLen = 0
 end
 
 ---Checks the input contract against the list of arguments. 
@@ -434,20 +424,11 @@ local function check(input, ...)
             error('Implicit arg lookup failed. Note that vararg lookup is not supported; varargs can still be passed explicitly.')
         end
     end
-    -- check the cache for any equivalent calls made in the past. If found, we can return early without having to rerun the parser/checkArgs() function.
-    local argTypesString = argTypesToString(checkArgList)
-    if contract._checkCache[input]
-    and contract._checkCache[input][argTypesString] then
-        return
-    end
     parser:init(input)
     local ok, err = parser:run()
     if not ok then error(err) end
     ok, err = parser.o:checkArgs(checkArgList)
     if not ok then error(err) end
-    -- if checkArgs() passed, then we can add this input string and list of arg types to the checkCache table to avoid having to do the work again next time an equivalent check is requested.
-    contract._checkCache[input] = contract._checkCache[input] or {}
-    contract._checkCache[input][argTypesString] = true
 end
 
 function contract.check(input, ...)
@@ -476,15 +457,6 @@ function contract.config(options)
     end
     if type(options) ~= 'table' then
         error(('options arg must be a table, not %s.'):format(type(options)))
-    end
-    if options.allowFalseOptionalArgs ~= nil then
-        contract._config.allowFalseOptionalArgs = not not options.allowFalseOptionalArgs
-    end
-    if type(options.callCacheMax) == 'number' then
-        contract._config.callCacheMax = options.callCacheMax
-    end
-    if type(options.errorOnCallCacheOverflow) == 'string' then
-        contract._config.errorOnCallCacheOverflow = options.errorOnCallCacheOverflow
     end
 end
 
