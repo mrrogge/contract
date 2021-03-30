@@ -273,11 +273,29 @@ function Parser:init(input, lexer)
     self.lexer = lexer
     self.lexer:init(input)
     self.input = input
-    self.o = Contract:new():init()
     self.ruleIdx = 0
     self.token = nil
     self.tokenVal = nil
+    self.cache = self.cache or {}
+    self.o, self.done = self:getContractObject(input)
     return self
+end
+
+-- Returns a new Contract object for a given input, and a found flag. The Parser gradually caches Contract objects for a given input so that they can be reused. If calling this function returned a newly created instance of Contract, found is false, otherwise found is true.
+function Parser:getContractObject(input)
+    if self.cache[input] then
+        return self.cache[input], true
+    else
+        self.cache[input] = Contract:new():init()
+        return self.cache[input], false
+    end
+end
+
+-- Clears the cache table of Contract objects.
+function Parser:clearCache()
+    for k,v in pairs(self.cache) do
+        self.cache[k] = nil
+    end
 end
 
 function Parser:addRule()
@@ -345,8 +363,10 @@ function Parser:contract()
     return true
 end
 
----Runs the parser and builds the ContractObject from the input string.
+-- Runs the parser and builds the Contract object from the input string. The Contract object can be accessed by the o member of this object. Once the parser completes a run, it will set the done member to true; the parser will then need to be reinitialized to be run again. 
+-- Returns true if parser succeeded, otherwise returns nil and an error string.
 function Parser:run()
+    if self.done then return true end
     self.token, self.tokenVal = self.lexer:process()
     if not self.token then return nil, self.tokenVal end
     return self:contract()
