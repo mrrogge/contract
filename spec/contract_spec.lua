@@ -1,5 +1,5 @@
 describe('contract module,', function()
-    insulate('check() and __call()', function()
+    insulate('check()/__call()', function()
         local contract = require('contract')
 
         --since contract.__call() is an alias for contract.check(), all of the following tests apply for both. To simplify our test code, we will create a local function that calls both of these with the same arguments. Note that this function will not work for the implicit arg lookup tests - those will need to define a different calling function.
