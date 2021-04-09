@@ -422,7 +422,6 @@ local function check(input, ...)
         local i = 1
         while true do
             local argName, argVal = debug.getlocal(DEBUG_LEVEL, i)
-            print(i, argName, argVal)
             if not argName then
                 break
             elseif argName == 'arg' then
@@ -437,7 +436,6 @@ local function check(input, ...)
         local j = -1
         while true do
             local argName, argVal = debug.getlocal(DEBUG_LEVEL, j)
-            print(j, argName, argVal)
             if not argName then
                 break
             else
