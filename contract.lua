@@ -22,6 +22,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
+--Here we define a DEBUG_LEVEL constant that differs depending on the specific Lua version. For some reason in plain Lua 5.1, the debug.getlocal() function needs to look one level up to work correctly with the implicit arg checks (not sure why, might be a bug in the debug library).
+local DEBUG_LEVEL = 2
+if _VERSION == 'Lua 5.1' and not jit then
+    DEBUG_LEVEL = 3
+end
+
 local defaultConfigTable = {
 
 }
@@ -412,21 +418,41 @@ local function check(input, ...)
             checkArgList[i] = select(i, ...)
         end
     else
-        --try to get the argument values passed to the function two levels above this one (i.e. the function that called contract.check() or contract()). Note that accessing varargs through debug.getlocal() is only supported on Lua v5.2+, NOT v5.1.
+        --try to get the argument values passed to the function two levels above this one (i.e. the function that called contract.check() or contract()).
         local i = 1
         while true do
-            local argName, argVal = debug.getlocal(2, i)
+            local argName, argVal = debug.getlocal(DEBUG_LEVEL, i)
+            print(i, argName, argVal)
+            if not argName then
+                break
+            elseif argName == 'arg' then
+            -- for some versions of Lua, varargs are captured in a local table named "arg". Unfortunately, this creates ambiguity between functions that use varargs and functions with args actually named "arg" that are table values...SMH. For now, we will just raise an error regardless of the Lua version and recommend passing args to contract() explicitly.
+                error('Implicit arg lookup failed. Ambiguity exists between varargs and args named "arg". Use explicit passing instead.')
+            else
+                checkArgList[i] = argVal
+            end
+            i = i + 1
+        end
+        -- For Lua v5.2+, varargs can be looked up via debug.getlocal() with negative indices. Check these and append them to checkArgList if found.
+        local j = -1
+        while true do
+            local argName, argVal = debug.getlocal(DEBUG_LEVEL, j)
+            print(j, argName, argVal)
             if not argName then
                 break
             else
                 checkArgList[i] = argVal
             end
             i = i + 1
+            j = j - 1
         end
         if i > 1 then
             checkArgList.n = i-1
         else
-            error('Implicit arg lookup failed. Note that vararg lookup is not supported; varargs can still be passed explicitly.')
+            -- No args were found via debug.getlocal(). This could mean either there really were no args passed to the calling function, or the function had only varargs but could not be looked up because the Lua version is 5.1 or older. If the latter is true, then we will raise an error and recommend explicit passing. If, however, the Lua version is 5.2+ or JIT v2.0+, we can continue on with an empty list of args.
+            if _VERSION == 'Lua 5.1' and not jit then
+                error('Implicit arg lookup failed. Vararg lookup may not be supported for this version of Lua; use explicit passing instead.')
+            end
         end
     end
     parser:init(input)
