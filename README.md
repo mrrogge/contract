@@ -34,7 +34,7 @@ local function sum(a, b)
 end
 ```
 
-This function expects two numbers to be passed to it. Note the two assert calls - if any other value types are passed in, the asserts fail and an error is raised. We can think of the `sum()` function as having a "contract" that says, "I expect two number values to be passed to me, and as long as that is true I will run correctly."
+This function expects two numbers to be passed to it. Note the two assert calls - if any other value types are passed in, the asserts will fail and an error will be raised. We can think of the `sum()` function as having a "contract" that says, "I expect two number values to be passed to me, and as long as that is true I will run correctly."
 
 `contract()` can be used as an alternative to writing out these asserts manually. For example:
 
@@ -128,7 +128,7 @@ config({}, 'mytable', true, 'not a number')    --Contract violated: arg "4" is t
 config({}, true)    --Contract violated: arg "2" is type "boolean" but must be "string".
 ```
 
-Optional args at the end of the list can be completely omitted. Also, note that optional args can come before required args, but if they are being omitted they must have passed `nil` explicitly - just leaving these out will not work.
+Optional args at the end of the list can be completely omitted. Also, note that optional args can come before required args, but if they are being omitted they must have `nil` passed explicitly - just leaving these out will not work.
 
 ### Multi-type arguments
 You can specify an argument that can be one of multiple types using the '|' operator:
@@ -145,6 +145,7 @@ You can also use the "a" or "any" specifiers to accept values of any type:
 contract('a', 1)    --<passes>
 contract('any', 'one')    --<passes>
 contract('a', true)    --<passes>
+contract('ra, ra', 1)    --Contract violated: arg pos "2" is required.
 ```
 
 ### Extra arguments are ignored
@@ -163,12 +164,14 @@ local function sum(a, b)
     return a + b
 end
 
+sum(1, 2)    --<passes>
 sum(1, 'two')    --Contract violated: arg "2" is type "string" but must be "number".
 ```
 
 While this method uses less typing, it unfortunately takes longer to execute compared to the explicit method. You are free to use whichever method best suits your needs.
 
 ### Enabling/disabling checks
+
 
 ## Performance
 
