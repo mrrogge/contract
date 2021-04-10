@@ -1,7 +1,7 @@
 --[[
 MIT License
 
-Copyright (c) 2019 Matt Rogge
+Copyright (c) 2019, 2021 Matt Rogge
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,10 +22,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
+--Here we define a DEBUG_LEVEL constant that differs depending on the specific Lua version. For some reason in plain Lua 5.1, the debug.getlocal() function needs to look one level up to work correctly with the implicit arg checks (not sure why, might be a bug in the debug library).
+local DEBUG_LEVEL = 2
+if _VERSION == 'Lua 5.1' and not jit then
+    DEBUG_LEVEL = 3
+end
+
+local defaultConfigTable = {
+
+}
+
 -- the module
 local contract = {
-    _callCache = {},
-    _callCacheLen = 0
+    _enabled=true,
+    _config={
+
+    }
 }
 
 -- token enum
@@ -60,27 +72,30 @@ end
 function Lexer:init(input)
     self.input = input or ''
     self.pos = 1
-    self.errorLevel = 5
 end
 
+---Advances lexer position by i characters and returns the new character.
 function Lexer:advance(i)
     i = i or 1
     self.pos = self.pos+i
     return self:current()
 end
 
+---Returns a substring from the input.
+-- i is the starting offset from the current position. If 0, the current position is used. Similarly, j is the ending offset.
 function Lexer:peek(i,j)
     i = i or 0
     j = j or i
     return string.lower(string.sub(self.input, self.pos+i, self.pos+j))
 end
 
+---Returns the character at the current position.
 function Lexer:current()
     return self:peek(0)
 end
 
+---Processes the input string and returns the next token.
 function Lexer:process()
-    --Processes the input string and returns the next token.
     local current = self:current()
     while current and current ~= '' do
         if isWhitespace(current) then
@@ -167,342 +182,317 @@ function Lexer:process()
                 current = self:advance(1)
                 return TOKEN.COMMA
             else
-                error(('Contract syntax error: pos %d, char %s'):format(
-                    self.pos, self:current()), 2)
+                return nil, ('Contract syntax error: pos %d, char %s'):format(
+                    self.pos, self:current())
             end
         end
     end
     return TOKEN.EOF
 end
 
--- Interpreter class
-local Interpreter = {}
-Interpreter.__index = Interpreter
+-- ContractRule class. Used by the Contract class to represent a singular rule for an arg.
+local ContractRule = {}
+ContractRule.__index = ContractRule
 
-function Interpreter:new()
+function ContractRule:new()
     local o = {}
     setmetatable(o, self)
     return o
 end
 
-local ruleTypeList = {}
-local argNameList, argValList = {}, {}
-function Interpreter:init(lexer, input, ...)
-    self.lexer = lexer
+function ContractRule:init()
+    self.req = false
+    self.typeList = {}
+    return self
+end
+
+function ContractRule:addType(t)
+    self.typeList[t] = true
+end
+
+-- Contract class. An intermediate representation of a contract string that is built by running a Parser.
+local Contract = {}
+Contract.__index = Contract
+
+function Contract:new()
+    local o = {}
+    setmetatable(o, self)
+    return o
+end
+
+function Contract:init()
+    self.ruleList = {}
+    return self
+end
+
+-- Check a list of args against this contract. Returns true if valid, otherwise, returns nil and an error string.
+function Contract:checkArgs(argList)
+    for i, rule in ipairs(self.ruleList) do
+        local arg = argList[i]
+        if arg == nil then
+            if self.ruleList[i].req then
+                return nil,
+                    ('Contract violated: arg pos "%d" is required.'):format(i)
+            end
+        else
+            if not self.ruleList[i].typeList['any']
+            and not self.ruleList[i].typeList[type(arg)]
+            then
+                local validTypes = {}
+                for k,v in pairs(self.ruleList[i].typeList) do
+                    table.insert(validTypes, k)
+                end
+                if #validTypes > 1 then
+                    return nil,
+                        ('Contract violated: arg "%d" is type "%s" (%s), but must be one of: %s'):format(
+                        i, type(arg), arg, 
+                        table.concat(validTypes, '|'))
+                else
+                    return nil,
+                        ('Contract violated: arg "%d" is type "%s" (%s), but must be "%s"'):format(
+                        i, type(arg), arg, validTypes[1])                 
+                end
+            end
+        end
+    end
+    return true
+end
+
+-- Parser class. Responsible for processing tokens through the lexer and building an intermediate Contract object based on the input string.
+local Parser = {}
+Parser.__index = Parser
+
+function Parser:new()
+    local o = {}
+    setmetatable(o, self)
+    return o
+end
+
+function Parser:init(input)
+    self.lexer = self.lexer or Lexer:new()
     self.lexer:init(input)
-    self.argNameList, self.argValList = argNameList, argValList
-    emptyTable(self.argNameList)
-    emptyTable(self.argValList)
-    local nargs = 0
-    for i=1, select('#',...), 1 do
-        if i%2 == 1 then
-            nargs = nargs + 1
-            local argName = select(i,...)
-            table.insert(self.argNameList, argName)
-        else
-            local argVal = select(i,...)
-            self.argValList[nargs] = argVal
-        end
-    end
-    self.argInt = 1
-    self.ruleTypeList = ruleTypeList
-    emptyTable(self.ruleTypeList)
-    self.req = false
-    self.errorLevel = 5
+    self.input = input
+    self.ruleIdx = 0
+    self.token = nil
+    self.tokenVal = nil
+    self.cache = self.cache or {}
+    self.o, self.done = self:getContractObject(input)
+    return self
 end
 
-function Interpreter:addNewType(val)
-    table.insert(self.ruleTypeList, val)
-end
-
-function Interpreter:currentArgName()
-    return self.argNameList[self.argInt]
-end
-
-function Interpreter:currentArgVal()
-    return self.argValList[self.argInt]
-end
-
-function Interpreter:currentArgType()
-    return type(self:currentArgVal())
-end
-
-function Interpreter:incErrorLevel()
-    self.errorLevel = self.errorLevel + 1
-    self.lexer.errorLevel = self.lexer.errorLevel + 1
-end
-
-function Interpreter:decErrorLevel()
-    self.errorLevel = self.errorLevel - 1
-    self.lexer.errorLevel = self.lexer.errorLevel - 1
-end
-
-function Interpreter:checkArg()
-    self:incErrorLevel()
-    local allowFalse = contract._config.allowFalseOptionalArgs
-    if self.req then
-        if self:currentArgVal() == nil then
-            error(('Contract violated: arg pos "%d" is required.'):format(
-                self.argInt), self.errorLevel)
-        end
+-- Returns a new Contract object for a given input, and a found flag. The Parser gradually caches Contract objects for a given input so that they can be reused. If calling this function returned a newly created instance of Contract, found is false, otherwise found is true.
+function Parser:getContractObject(input)
+    if self.cache[input] then
+        return self.cache[input], true
     else
-        if (not allowFalse and self:currentArgVal() == nil)
-                or (allowFalse and not self:currentArgVal()) then
-            emptyTable(self.ruleTypeList)
-            self.argInt = self.argInt + 1
-            self.req = false
-            self:decErrorLevel()
-            return
-        end
+        self.cache[input] = Contract:new():init()
+        return self.cache[input], false
     end
-    local isValid = false
-    for _, t in ipairs(self.ruleTypeList) do
-        if t == 'any' or t == self:currentArgType() then
-            isValid = true
-        end
-    end
-    if not isValid then
-        if #self.ruleTypeList > 1 then
-            error(('Contract violated: arg "%s" is type "%s" (%s), but must be one of: %s'):format(
-                self:currentArgName(), self:currentArgType(), self:currentArgVal(),
-                table.concat(self.ruleTypeList, '|')), self.errorLevel
-            )
-        else
-            error(('Contract violated: arg "%s" is type "%s" (%s), but must be "%s"'):format(
-                self:currentArgName(), self:currentArgType(), self:currentArgVal(),
-                table.concat(self.ruleTypeList, '|')), self.errorLevel
-            )
-        end     
-    end
-    emptyTable(self.ruleTypeList)
-    self.argInt = self.argInt + 1
-    self.req = false
-    self:decErrorLevel()
 end
 
-function Interpreter:eat(token)
-    self:incErrorLevel()
+-- Clears the cache table of Contract objects.
+function Parser:clearCache()
+    for k,v in pairs(self.cache) do
+        self.cache[k] = nil
+    end
+end
+
+function Parser:addRule()
+    table.insert(self.o.ruleList, ContractRule:new():init())
+    self.ruleIdx = self.ruleIdx + 1
+end
+
+function Parser:getCurrentRule()
+    return self.o.ruleList[self.ruleIdx]
+end
+
+---Advances the lexer and checks that the passed token matches the returned token.
+-- If matched, returns true, otherwise returns nil and an error string.
+function Parser:eat(token)
     if self.token == token then
         self.token, self.tokenVal = self.lexer:process()
     else
-        error(('Contract syntax error: expected token "%s", but got "%s"'):format(
-            token, self.token), self.errorLevel)
+        return nil,
+            ('Contract syntax error: expected token "%s", but got "%s"'):format(
+            token, self.token)
     end
-    self:decErrorLevel()
+    return true
 end
 
-function Interpreter:type_()
+---Consume function for a type symbol.
+function Parser:type_()
     -- type = num|str|bool|user|fnc|th|tbl|any
-    self:incErrorLevel()
-    self:addNewType(self.tokenVal)
-    self:eat(TOKEN.TYPE)
-    self:decErrorLevel()
+    self:getCurrentRule():addType(self.tokenVal)
+    return self:eat(TOKEN.TYPE)
 end
 
-function Interpreter:argRule()
+---Consume function for an argRule symbol.
+function Parser:argRule()
     -- argRule = ['r'] , type , ('|' , type)*
-    self:incErrorLevel()
+    self:addRule()
     if self.token == TOKEN.REQ then
-        self.req = true
+        self:getCurrentRule().req = true
         self:eat(TOKEN.REQ)
     end
-    self:type_()
+    local ok, err = self:type_()
+    if not ok then return nil, err end
     while self.token == TOKEN.OR do
-        self:eat(TOKEN.OR)
-        self:type_()
+        local ok, err = self:eat(TOKEN.OR)
+        ok, err = self:type_()
+        if not ok then return nil, err end
     end
-    self:checkArg()
-    self:decErrorLevel()
+    return true
 end
 
-function Interpreter:contract()
+---Consume function for a contract symbol.
+function Parser:contract()
     -- contract = '' | (argRule , (',' , argRule)*)
     if self.token == TOKEN.EOF then
-        return
+        return true
     end
-    self:argRule()
+    local ok, err = self:argRule()
+    if not ok then return nil, err end
     while self.token == TOKEN.COMMA do
-        self:eat(TOKEN.COMMA)
-        self:argRule()
+        local ok, err = self:eat(TOKEN.COMMA)
+        ok, err = self:argRule()
+        if not ok then return nil, err end
     end
+    ok, err = self:eat(TOKEN.EOF)
+    if not ok then return nil, err end
+    return true
 end
 
-function Interpreter:run()
-    self.token,self.tokenVal = self.lexer:process()
-    self:contract()
+-- Runs the parser and builds the Contract object from the input string. The Contract object can be accessed by the o member of this object. Once the parser completes a run, it will set the done member to true; the parser will then need to be reinitialized to be run again. 
+-- Returns true if parser succeeded, otherwise returns nil and an error string.
+function Parser:run()
+    if self.done then return true end
+    self.token, self.tokenVal = self.lexer:process()
+    if not self.token then return nil, self.tokenVal end
+    return self:contract()
 end
+
+-- the check function re-uses local instances of lexer and parser each
+-- time it is executed. This way the GC doesn't need to work as hard.
+local parser = Parser:new():init('')
 
 -- cache-related functions
 local tempTbl = {}
-local function callToString(f, ...)
-    -- returns a string representation of a function call. Uses the function's
-    -- identity and the argument types.
+local function argTypesToString(t)
+    -- for a given list of args t, returns a string representation of the types of each arg. This is used to avoid re-running a contract check that is equivalent to a previous one, since a check will always yield the same result for a given input string and the same type list.
     for k,v in pairs(tempTbl) do
         tempTbl[k] = nil
     end
-    local nargs = select('#',...)
-    for i=1, nargs, 1 do
-        table.insert(tempTbl, type(select(i,...)))
+    for i=1, t.n, 1 do
+        table.insert(tempTbl, type(t[i]))
     end
-    return tostring(f)..'-'..table.concat(tempTbl, '-')
+    return table.concat(tempTbl, '-')
 end
 
+-- Clears the caches for the module.
+function contract.clearCache()
+    parser:clearCache()
+end
+
+-- Depreciated; left in for backwards compatibility.
 function contract.clearCallCache()
-    for k,v in pairs(contract._callCache) do
-        contract._callCache[k] = nil
-    end
-    contract._callCacheLen = 0
+    print('WARNING: contract.clearCallCache() is depreciated, use contract.clearCache() instead.')
 end
 
--- the check function re-uses local instances of lexer and interpreter each
--- time it is executed. This way the GC doesn't need to work as hard.
-local lexer = Lexer:new()
-local interpreter = Interpreter:new()
-local argNameTbl, argValTbl, argTbl = {}, {}, {}
-local function check(input, level)
-    -- Checks the contract string input against the params of the function that
-    -- is at the specified level in the calling stack.
-    for k,v in pairs(argNameTbl) do
-        argNameTbl[k] = nil
+---Checks the input contract against the list of arguments. 
+-- If no arguments were passed, this function will try to lookup the arguments passed to the function that called this one and check those.
+local checkArgList = {}
+local function check(input, ...)
+    if not contract._enabled then return end
+    if input == nil then return end
+    if input == '' then return end
+    if type(input) ~= 'string' then
+        error('contract must be a string type.')
     end
-    for k,v in pairs(argValTbl) do
-        argValTbl[k] = nil
+    for k,v in pairs(checkArgList) do
+        checkArgList[k] = nil
     end
-    for k,v in pairs(argTbl) do
-        argTbl[k] = nil
-    end
-    local argName, argVal
-    local argCount, i = 1, 1
-    while true do
-        argName,argVal = debug.getlocal(level, argCount)
-        if not argName then
-            break
-        else
-            if argName == 'arg' and type(argVal) == 'table' then
-                for j=1, argVal.n, 1 do
-                    argNameTbl[argCount] = ('(vararg %d)'):format(j)
-                    argValTbl[argCount] = argVal[j]
-                    argTbl[i] = argNameTbl[argCount]
-                    i = i + 1
-                    argTbl[i] = argValTbl[argCount]
-                    i = i + 1
-                end
+    local nargs = select('#',...)
+    if nargs > 0 then
+        checkArgList.n = nargs
+        for i=1, nargs, 1 do
+            checkArgList[i] = select(i, ...)
+        end
+    else
+        --try to get the argument values passed to the function two levels above this one (i.e. the function that called contract.check() or contract()).
+        local i = 1
+        while true do
+            local argName, argVal = debug.getlocal(DEBUG_LEVEL, i)
+            if not argName then
+                break
+            elseif argName == 'arg' then
+            -- for some versions of Lua, varargs are captured in a local table named "arg". Unfortunately, this creates ambiguity between functions that use varargs and functions with args actually named "arg" that are table values...SMH. For now, we will just raise an error regardless of the Lua version and recommend passing args to contract() explicitly.
+                error('Implicit arg lookup failed. Ambiguity exists between varargs and args named "arg". Use explicit passing instead.')
             else
-                argNameTbl[argCount] = argName
-                argValTbl[argCount] = argVal
-                argTbl[i] = argName
-                i = i + 1
-                argTbl[i] = argVal
-                i = i + 1
+                checkArgList[i] = argVal
             end
-            argCount = argCount + 1
+            i = i + 1
         end
-    end
-    local vargIdx = -1
-    while true do
-        argName,argVal = debug.getlocal(level, vargIdx)
-        if not argName then
-            break
+        -- For Lua v5.2+, varargs can be looked up via debug.getlocal() with negative indices. Check these and append them to checkArgList if found.
+        local j = -1
+        while true do
+            local argName, argVal = debug.getlocal(DEBUG_LEVEL, j)
+            if not argName then
+                break
+            else
+                checkArgList[i] = argVal
+            end
+            i = i + 1
+            j = j - 1
+        end
+        if i > 1 then
+            checkArgList.n = i-1
         else
-            argNameTbl[argCount] = argName
-            argValTbl[argCount] = argVal
-            argTbl[i] = argName
-            i = i + 1
-            argTbl[i] = argVal
-            i = i + 1
+            -- No args were found via debug.getlocal(). This could mean either there really were no args passed to the calling function, or the function had only varargs but could not be looked up because the Lua version is 5.1 or older. If the latter is true, then we will raise an error and recommend explicit passing. If, however, the Lua version is 5.2+ or JIT v2.0+, we can continue on with an empty list of args.
+            if _VERSION == 'Lua 5.1' and not jit then
+                error('Implicit arg lookup failed. Vararg lookup may not be supported for this version of Lua; use explicit passing instead.')
+            end
         end
-        argCount = argCount + 1
-        vargIdx = vargIdx - 1
     end
-    local f = debug.getinfo(level, 'f').func
-    local callString = callToString(f, unpack(argValTbl))
-    if contract._callCache[callString] then
-        return
-    end
-    interpreter:init(lexer, input, unpack(argTbl))
-    interpreter:run()
-    if contract._callCacheLen >= contract._config.callCacheMax
-            and contract._config.callCacheMax >= 0 then
-        if contract._config.onCallCacheOverflow == 'error' then
-            error('call cache overflow')
-        elseif contract._config.onCallCacheOverflow == 'clear' then
-            contract.clearCallCache()
-        end
-    else
-        contract._callCache[callString] = true
-        contract._callCacheLen = contract._callCacheLen + 1
-    end
+    parser:init(input)
+    local ok, err = parser:run()
+    if not ok then error(err) end
+    ok, err = parser.o:checkArgs(checkArgList)
+    if not ok then error(err) end
 end
 
-local function nop()
-    -- the check function is replaced with nop() when contract evaluation is
-    -- turned off.
-end
-
-local function checkExplicitCall(input)
-    if type(jit) == 'table' then
-        return check(input, 2)
-    else
-        return check(input, 3)
-    end
-end
-
-local function checkShortcutCall(_, input)
-    if type(jit) == 'table' then
-        return check(input, 2)
-    else
-        return check(input, 3)
-    end
+function contract.check(input, ...)
+    return check(input, ...)
 end
 
 function contract.on()
-    contract.check = checkExplicitCall
-    local mt = getmetatable(contract)
-    mt.__call = checkShortcutCall
+    contract._enabled = true
 end
 
 function contract.off()
-    contract.check = nop
-    local mt = getmetatable(contract)
-    mt.__call = nop
+    contract._enabled = false
 end
 
 function contract.isOn()
-    return contract.check == checkExplicitCall
+    return contract._enabled
 end
 
 function contract.toggle()
-    if contract.isOn() then
-        contract.off()
-    else
-        contract.on()
-    end
+    contract._enabled = not contract._enabled
 end
 
 function contract.config(options)
-    contract._config = contract._config or {}
-    --set defaults
-    if contract._config.allowFalseOptionalArgs == nil then
-        contract._config.allowFalseOptionalArgs = false
-    end
-    contract._config.callCacheMax = contract._config.callCacheMax or -1
-    contract._config.onCallCacheOverflow = contract._config.onCallCacheOverflow or 'nothing'
     if not options then
-        return
+        options = defaultConfigTable
     end
-    if options.allowFalseOptionalArgs ~= nil then
-        contract._config.allowFalseOptionalArgs = options.allowFalseOptionalArgs
-    end
-    if options.callCacheMax ~= nil then
-        contract._config.callCacheMax = options.callCacheMax
-    end
-    if options.errorOnCallCacheOverflow ~= nil then
-        contract._config.errorOnCallCacheOverflow = options.errorOnCallCacheOverflow
+    if type(options) ~= 'table' then
+        error(('options arg must be a table, not %s.'):format(type(options)))
     end
 end
 
-setmetatable(contract, {})
-contract.on()
-contract.config()
+setmetatable(contract, {
+    __call=function(t, input, ...)
+        return check(input, ...)
+    end
+})
 
 return contract

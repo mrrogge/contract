@@ -1,6 +1,14 @@
 # contract
 
-`contract` is a small library for LUA that implements a [design by contract](https://en.wikipedia.org/wiki/Design_by_contract) approach to writing code. In general, function calls are compared against a "contract string" at run time that defines what types are allowed for each function argument.
+`contract` is a module that checks whether or not function arguments satisfy a specified "contract" string. These strings define the argument type requirements for a given function using a custom mini-language.
+
+`contract` provides two main benefits:
+1. It provides a simple mechanism for checking argument datatypes.
+2. It helps document the intended use of each function.
+
+`contract` is NOT:
+- A full unit-testing solution.
+- A compile-time evaluator. All checks are performed at run-time, however they can be turned off for non-development builds. If you want something that evaluates your code prior to execution, consider something like [TypeScriptToLua](https://github.com/TypeScriptToLua/TypeScriptToLua).
 
 ## Installation
 
@@ -14,73 +22,165 @@ You may also download the latest release and include contract.lua in your projec
 
 `contract` is compatible with LUA versions 5.1 and up. It does not have any external dependencies.
 
-## Usage Example
+## Usage
+
+Consider the following function:
+
+```lua
+local function sum(a, b)
+    assert(type(a) == 'number', 'arg "a" must be a number')
+    assert(type(b) == 'number', 'arg "b" must be a number')
+    return a + b
+end
+```
+
+This function expects two numbers to be passed to it. Note the two assert calls - if any other value types are passed in, the asserts will fail and an error will be raised. We can think of the `sum()` function as having a "contract" that says, "I expect two number values to be passed to me, and as long as that is true I will run correctly."
+
+`contract()` can be used as an alternative to writing out these asserts manually. For example:
 
 ```lua
 local contract = require('contract')
 
-local function foo(bar, baz)
-    -- We want this function to require two parameters, "bar" as a number, and 
-    -- "baz" as a string.
-    contract('rn,rs')   --'rn'='required number', 'rs'='required string'
+local function sum2(a,b)
+    contract('rn, rn', a, b)
+    return a + b
 end
-
--- This call to foo() would be OK:
-foo(42, 'bleh')
-
--- However, this would raise an error:
-foo(true, {})   -- contract violated; bar must be a number, but it's a boolean.
-
--- This would also raise an error:
-foo(13) -- contract violated; baz is required for foo().
-
--- Additional parameters not defined in the contract are ignored:
-foo(1, 'two', 3)    -- OK
-
--- Contracts can be turned off, e.g. when the code is ready for release:
-contract.off()
-foo()   -- No error
-
 ```
 
-## Why?
+Function `sum2()` is equivalent to `sum()` in that any non-number values for `a` and `b` will be rejected. 
 
-Dynamically-typed languages like LUA have a lot of flexibility, but can also lead to maintenance problems in larger codebases. This library gives you a mechanism to define how your functions are supposed to be used; it's essentially just an assert statement for arg types. Using `contract` can help you identify issues with your code faster, while also "documenting" your functions in a fairly easy-to-understand format.
+The first argument passed to `contract()` is the contract string "rn, rn", which represents a contract for two required number arguments.
 
-Note that this library is NOT:
-- A full unit-testing solution. `contract` handles only a small subset of errors that can occur in a program, and other testing solutions should be used alongside it.
-- A compile-time evaluator. All checks are performed at run-time, however they can be turned off for non-development builds. If you want something that evaluates your code prior to execution, consider something like [TypeScriptToLua](https://github.com/TypeScriptToLua/TypeScriptToLua).
+The arguments `a` and `b` are then passed after the contract string to verify if they satisfy the contract. If `sum2()` is called with arguments that violate this contract, an error will be raised:
 
-## Contract strings
+```lua
+sum2(1, 2)        --<passes>
+sum2('one', 2)    --Contract violated: arg "1" is type "string", but must be "number".
+sum2(1, 'two')    --Contract violated: arg "2" is type "string", but must be "number".
+sum2(1)           --Contract violated: arg pos "2" is required.
+```
 
-`contract` defines a sort of "mini-language" for writing contract strings. Here's an explanation of the syntax:
+### Contract string syntax
+The syntax for contracts is quite simple:
+* Each argument has a rule specifying its allowed datatype(s). For example, in the contract string above "rn" stands for "required number".
+* The rules for each argument are listed in position order separated by commas.
+* Contracts are not case-sensitive.
+* All whitespace is ignored.
 
-- A contract is made up of "rules" for each argument, separated by commas.
-- Each argument rule is a sequence of type codes, describing which of the primitive LUA types are allowed. Here are the corresponding codes for each type:
-  - **string**: "s", "str", or "string"
-  - **number**: "n", "num", or "number"
-  - **boolean**: "b", "bool", or "boolean"
-  - **table**: "t", "tbl", or "table"
-  - **function**: "f", "fnc", "func", or "function"
-  - **thread**: "th" or "thread"
-  - **userdata**: "u", "usr", "user", "userdata"
-  - **any**: "a" or "any" (used to allow an arg to be any type)
-- The alternative string sequences for each type allow you to be as brief or as explicit as you want.
-- If an argument has the option of being more than one type, use the "|" operator to separate the valid type codes. Example: "s|n|b" would allow the argument to be a string OR a number OR a boolean.
-- For arguments that are required (i.e. cannot be nil), prefix the rule string with an "r".
-- All letters are case-insensitive, and all whitespace is ignored.
+`contract` can be used to check any of the primitive Lua datatypes:
 
-### Examples
+```lua
+local function callIfTrue(bl, fnc)
+    contract('rb, rf', bl, fnc)
+    if bl then
+        fnc()
+    end
+end
 
-- "**s**": 1st arg must be a string or nil
-- "**number**": 1st arg must be a number or nil
-- "**rbool**": 1st arg must be a boolean (and cannot be nil)
-- "**rt,s**": 1st arg must be a table, 2nd arg must be a string or nil
-- "**rstring|rstring|boolean**": 1st and 2nd args must be strings, 3rd arg must be a boolean or nil
-- "**a,b**": 1st arg can be anything, 2nd arg must be a boolean or nil
-- "**rany,rany**": 1st and 2nd args can be anything (except for nil)
+callIfTrue(true, function() print('hello') end)    --'hello'
+callIfTrue(true, 'not a function')    --Contract violated: arg "2" is type "string", but must be "function".
+```
 
-### Contract language in [EBNF](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form)
+There are multiple specifiers associated with each datatype. This allows you to be as brief or as explicit as you want:
+
+```lua
+contract('number', 1)    --<passes>
+contract('s, str, string', 'one', 'two', 'three')    --<passes>
+```
+
+Here is a table listing all the acceptable specifiers for each Lua type:
+
+| datatype | specifiers |
+| --- | ---|
+| number | "n", "num", "number" |
+| string | "s", "str", "string" |
+| boolean | "b", "bool", "boolean" |
+| table | "t", "tbl", "table" |
+| function | "f", "fnc", "func", "function" |
+| thread | "th", "thread" |
+| userdata | "u", "usr", "user", "userdata" |
+
+Note that `contract` is intended for evaluating arguments passed to a calling function, but you can actually pass any values to it:
+
+```lua
+contract('rt, rs', {}, '')           --<passes>
+contract('ru', 'not userdata')    --Contract violated: arg "1" is type "string", but must be "userdata".
+contract('rf', print)              --<passes>
+```
+
+### Required and optional arguments
+`contract` allows arguments to be specified as "required" or "optional". A type specifier preceeded by an "r" flags it as required. Any specifiers without an "r" are treated as optional.
+
+Optional arguments can be omitted, but if they are passed they still must match their specified type for the contract to pass:
+
+```lua
+local function config(tbl, name, op1, val)
+    contract('rt, s, rb, n', tbl, name, op1, val)
+    tbl.name = name or 'default'
+    tbl.op1 = op1
+    tbl.val = val or 42
+end
+
+config({}, 'mytable', true, 19)    --<passes>
+config({}, 'mytable', true)        --<passes>
+config({}, nil, true)              --<passes>
+config({}, 'mytable', true, 'not a number')    --Contract violated: arg "4" is type "string" but must be "number".
+config({}, true)    --Contract violated: arg "2" is type "boolean" but must be "string".
+```
+
+Optional args at the end of the list can be completely omitted. Also, note that optional args can come before required args, but if they are being omitted they must have `nil` passed explicitly - just leaving these out will not work.
+
+### Multi-type arguments
+You can specify an argument that can be one of multiple types using the '|' operator:
+
+```lua
+contract('rn|s', 1)    --<passes>
+contract('rn|s', 'one')    --<passes>
+contract('rn|s', true)    --Contract violated: arg "1" is type "boolean" but must be one of: "number|string".
+```
+
+You can also use the "a" or "any" specifiers to accept values of any type:
+
+```lua
+contract('a', 1)    --<passes>
+contract('any', 'one')    --<passes>
+contract('a', true)    --<passes>
+contract('ra, ra', 1)    --Contract violated: arg pos "2" is required.
+```
+
+### Extra arguments are ignored
+If more arguments are passed than are specified in the contract, then as long as the contract holds the extra arguments do not matter:
+
+```lua
+contract('rn', 1, 'two', 'three')    --<passes>
+```
+
+### Implicit argument lookup
+There are actually two ways to use `contract()`. The first is by explicitly passing the argument values you wish to check against the contract (all of the examples above use this method). The second method automatically looks up the arguments from the function that called `contract()` without needing to pass them in:
+
+```lua
+local function sum(a, b)
+    contract('rn, rn')    --implicit lookup of a & b
+    return a + b
+end
+
+sum(1, 2)    --<passes>
+sum(1, 'two')    --Contract violated: arg "2" is type "string" but must be "number".
+```
+
+While this method uses less typing, it unfortunately takes longer to execute compared to the explicit method. You are free to use whichever method best suits your needs.
+
+### Enabling/disabling checks
+The `contract` module can be globally disabled by calling `contract.off()`. Once disabled, any calls to `contract()` will essentially be no-ops. This is helpful for production builds since it removes the extra overhead needed to process the contracts.
+
+The module can be re-enabled by calling `contract.on()`. There is also `contract.toggle()`, which toggles between the on/off state.
+
+## Performance
+To help minimize execution time, `contract` makes use of an internal cache of intermediate objects tied to each contract string. The first time a contract string is passed, it is parsed and built into a corresponding object. The next time that contract string is passed in, the arguments are checked against the previously-built object rather than creating a new one.
+
+Sadly, the `contract` module still adds a bit of execution overhead compared to just checking arguments with `assert()`. You can test performance on your system using the `performance.lua` file included in this repository.
+
+## Contract language in [EBNF](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form)
 
 Here is the complete grammar for the contract string mini-language:
 
@@ -93,24 +193,24 @@ str = 's'|'str'|'string'
 bool = 'b'|'bool'|'boolean'
 user = 'u'|'usr'|'user'|'userdata'
 fnc = 'f'|'fnc'|'function'
-th = 'f'|'fnc'|'function'
+th = 'th'|'thread'
 tbl = 't'|'tbl'|'table'
-any = 'a|any'
+any = 'a'|'any'
 ```
 
 ## API
 
-### `contract.check(input)`
+### `contract.check(input, ...)`
 
-Checks the calling function's arguments against the contract string `input`. Raises an error if the contract is violated.
+Checks the argument list against the contract string `input`. If no arguments are passed, attempts to look up the arguments passed to the function that called `contract.check()`. Raises an error if the contract is violated.
 
-### `contract(input)`
+### `contract(input, ...)`
 
 Alias for `contract.check()`.
 
 ### `contract.on()`
 
-Enables all contract checking. When the library is first imported, contracts will be enabled.
+Enables all contract checking (module is "on" by default).
 
 ### `contract.off()`
 
@@ -124,21 +224,14 @@ Returns `true` if contract checking is currently enabled; otherwise, returns `fa
 
 Switches the on/off state of the module.
 
-### `contract.config(options)`
+### `contract.clearCache()`
 
-Set the configuration settings for the module using a table `options`. Each key/value pair in this table should be the name and new value of an option from the following list:
-- **allowFalseOptionalArgs**: *boolean*. When set to `true`, optional args can be omitted using the `false` value, and will not throw an error. Otherwise when set to `false`, only `nil` is used for omitting args. The default is `false`.
-- **callCacheMax**: *number*. Sets the upper limit to the function call cache. This cache is used to keep track of redundant function calls that have already been checked and deemed valid. Setting this number to a positive value prevents the cache from growing beyond this number of records. Setting it to a negative number will let the cache grow unbounded. The default is -1 (unbounded).
-- **onCallCacheOverflow**: *string*. Sets the behavior for when the call cache reaches its max number of records. When set to "error", an error will be raised. When set to "clear", the cache will be flushed. When set to "nothing", or any other value, no action will be taken. The default is "nothing".
-
-### `contract.clearCallCache()`
-
-Clears the contents of the function call cache.
+Clears the contract cache.
 
 ## Credits
-`contract` is written and maintained by [Matt Rogge](https://gitlab.com/mrogge_).
+`contract` is written and maintained by [Matt Rogge](https://mattrogge.com).
 
-Portions of the interpreter code were inspired by [this great series of tutorials](https://ruslanspivak.com/lsbasi-part1/) written by [Ruslan Spivak](https://ruslanspivak.com/pages/about/).
+Portions of the parser code were inspired by [this great series of tutorials](https://ruslanspivak.com/lsbasi-part1/) written by [Ruslan Spivak](https://ruslanspivak.com/pages/about/).
 
 ## License
 
