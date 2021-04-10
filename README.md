@@ -171,9 +171,14 @@ sum(1, 'two')    --Contract violated: arg "2" is type "string" but must be "numb
 While this method uses less typing, it unfortunately takes longer to execute compared to the explicit method. You are free to use whichever method best suits your needs.
 
 ### Enabling/disabling checks
+The `contract` module can be globally disabled by calling `contract.off()`. Once disabled, any calls to `contract()` will essentially be no-ops. This is helpful for production builds since it removes the extra overhead needed to process the contracts.
 
+The module can be re-enabled by calling `contract.on()`. There is also `contract.toggle()`, which toggles between the on/off state.
 
 ## Performance
+To help minimize execution time, `contract` makes use of an internal cache of intermediate objects tied to each contract string. The first time a contract string is passed, it is parsed and built into a corresponding object. The next time that contract string is passed in, the arguments are checked against the previously-built object rather than creating a new one.
+
+Sadly, the `contract` module still adds a bit of execution overhead compared to just checking arguments with `assert()`. You can test performance on your system using the `performance.lua` file included in this repository.
 
 ## Contract language in [EBNF](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form)
 
@@ -190,7 +195,7 @@ user = 'u'|'usr'|'user'|'userdata'
 fnc = 'f'|'fnc'|'function'
 th = 'th'|'thread'
 tbl = 't'|'tbl'|'table'
-any = 'a|any'
+any = 'a'|'any'
 ```
 
 ## API
@@ -226,7 +231,7 @@ Clears the contract cache.
 ## Credits
 `contract` is written and maintained by [Matt Rogge](https://mattrogge.com).
 
-Portions of the interpreter code were inspired by [this great series of tutorials](https://ruslanspivak.com/lsbasi-part1/) written by [Ruslan Spivak](https://ruslanspivak.com/pages/about/).
+Portions of the parser code were inspired by [this great series of tutorials](https://ruslanspivak.com/lsbasi-part1/) written by [Ruslan Spivak](https://ruslanspivak.com/pages/about/).
 
 ## License
 
